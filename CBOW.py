@@ -8,191 +8,108 @@ from sklearn.model_selection import train_test_split
 import tensorflow as tf
 
 def review_to_wordlist( review, remove_stopwords=False ):
-    # Function to convert a document to a sequence of words,
-    # optionally removing stop words.  Returns a list of words.
-    #
-    # 1. Remove HTML
     review_text = BeautifulSoup(review,"lxml").get_text()
-    #
-    # 2. Remove non-letters
     review_text = re.sub("[^a-zA-Z]"," ", review_text)
-    #
-    # 3. Convert words to lower case and split them
     words = review_text.lower().split()
-    #
-    # 4. Optionally remove stop words (false by default)
     if remove_stopwords:
         stops = set(stopwords.words("english"))
         words = [w for w in words if not w in stops]
-    #
-    # 5. Return a list of words
+
     return(words)
 
-#read file
 train = pd.read_csv("filename", header=0, delimiter="\t", quoting=3)
-#------------feature extract-------------------------------------------------
 
 #load the tokenizer
 tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
 
-# Define a function to split a review into parsed sentences
 def review_to_sentences( review, tokenizer, remove_stopwords=False ):
-    # Function to split a review into parsed sentences. Returns a
-    # list of sentences, where each sentence is a list of words
-    #
-    # 1. Use the NLTK tokenizer to split the paragraph into sentences
     raw_sentences = tokenizer.tokenize(review.strip())
-    #
-    # 2. Loop over each sentence
     index_tmp = 0
     sentences = []
     for raw_sentence in raw_sentences:
-        # If a sentence is empty, skip it (limit the length =1000)
         if len(raw_sentence) > 0:
-            # Otherwise, call review_to_wordlist to get a list of words
             sentences.append( review_to_wordlist( raw_sentence, \
               remove_stopwords ))
             index_tmp+=1
-
-    #
-    # Return the list of sentences (each sentence is a list of words,
-    # so this returns a list of lists
     return sentences
 
-# convert each sentense to vectors
-sentences = []  # Initialize an empty list of sentences
+sentences = []
 
-#deal with labeled train dataset
 print ("Parsing sentences from training set")
 tmp_index = 0
 for review in train["review"]:
-    #if tmp_index<1000:
         sentences += review_to_sentences(review, tokenizer)
-    #tmp_index+=1;
 
-#deal with unlabeled train dataset
-#print ("Parsing sentences from unlabeled set")
-#for review in unlabel_train["review"]:
-#    sentences += review_to_sentences(review, tokenizer)
-
-# feature extraction
-#-----------------------------------------------------------------------------------------------------------------
-# Import the built-in logging module and configure it so that Word2Vec
-# creates nice output messages
 import logging
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s',\
     level=logging.INFO)
 
-# Set values for various parameters
-num_features = 50    # Word vector dimensionality
-min_word_count = 1   # Minimum word count
-num_workers = 4       # Number of threads to run in parallel
-context = 10          # Context window size
-downsampling = 1e-3   # Downsample setting for frequent words
+num_features = 50
+min_word_count = 1
+num_workers = 4
+context = 10
+downsampling = 1e-3
 
-# Initialize and train the model (this will take some time)
 from gensim.models import word2vec
 print ("Training model...")
 model = word2vec.Word2Vec(sentences, workers=num_workers, \
             size=num_features, min_count = min_word_count, \
             window = context, sample = downsampling,sg=0)
 
-# If you don't plan to train the model any further, calling
-# init_sims will make the model much more memory-efficient.
 model.init_sims(replace=True)
 
-# It can be helpful to create a meaningful model name and
-# save the model for later use. You can load it later using Word2Vec.load()
 model_name = "50features_1minwords_1000context"
 model.save(model_name)
 
-#from sklearn.cluster import KMeans
-#import time
-
-
-
-#-------------------create vector-----------------------------------
 def makeFeatureVec(words, model, num_features):
-    # Function to average all of the word vectors in a given
-    # paragraph
-    #
-    # Pre-initialize an empty numpy array (for speed)
     featureVec = np.zeros((num_features,),dtype="float32")
-    #
     nwords = 0.
-    #
-    # Index2word is a list that contains the names of the words in
-    # the model's vocabulary. Convert it to a set, for speed
+
     index2word_set = set(model.wv.index2word)
-    #
-    # Loop over each word in the review and, if it is in the model's
-    # vocaublary, add its feature vector to the total
+
     for word in words:
         if word in index2word_set:
             nwords = nwords + 1.
             featureVec = np.add(featureVec,model[word])
-    #
-    # Divide the result by the number of words to get the average
+
     featureVec = np.divide(featureVec,nwords)
     return featureVec
 
 
 def getAvgFeatureVecs(reviews, model, num_features):
-    # Given a set of reviews (each one a list of words), calculate
-    # the average feature vector for each one and return a 2D numpy array
-    #
-    # Initialize a counter
+
     counter = 0.
-    #
-    # Preallocate a 2D numpy array, for speed
+
     reviewFeatureVecs = np.zeros((len(reviews),num_features),dtype="float32")
-    #
-    # Loop through the reviews
+
     for review in reviews:
-       #
-       # Print a status message every 1000th review
+
        if counter%1000 == 0:
            print ("Review %d of %d" % (counter, len(reviews)))
-       #
-       # Call the function (defined above) that makes average feature vectors
+
        try:
            reviewFeatureVecs[np.int(counter)] = makeFeatureVec(review, model, \
                num_features)
        except IndexError:
            return 0
-       #
-       # Increment the counter
+
        counter = counter + 1.
     return reviewFeatureVecs
 
-# ****************************************************************
-# Calculate average feature vectors for training and testing sets,
-# using the functions we defined above. Notice that we now use stop word
-# removal.
 
 clean_train_reviews = []
 tmp = 0
 for review in train["review"]:
-    #if tmp<25000:
         clean_train_reviews.append(review_to_wordlist(review, \
             remove_stopwords=False))
         tmp+=1
 
-
 train_data_features = getAvgFeatureVecs(clean_train_reviews, model, num_features)
 
-#output = train["output"].reshape(1000,1)
-#
-#output = train["sentiment"].reshape(25000,1)[0:25000,:]
 output = train["sentiment"].reshape(7086,1)[0:7086,:]
 
 dataset_total = np.concatenate((train_data_features,output),axis=1)
 
-#dataset_total = np.zeros(shape=(1000,551),dtype=int)
-#dataset_total = np.asarray(dataset_total)
-
-#for i in range(25000):
-#for i in range(1000):
 for i in range(7086):
     for j in range(num_features):
         dataset_total[i][j] = train_data_features[i][j]
@@ -201,53 +118,27 @@ for i in range(7086):
 
 dataset_train,dataset_test = train_test_split(dataset_total,test_size=0.3)
 
-#from 0 to 300(excluded)
 dataset_train_X = dataset_train[:,0:num_features]
-#the 300th column
 dataset_train_y = dataset_train[:,num_features]
 
-
-#first, get the true output y and input x
 dataset_test_X = dataset_test[:,0:num_features]
 dataset_test_y = dataset_test[:,num_features]
-
-#testDataVecs = getAvgFeatureVecs( clean_test_reviews, model, num_features )
 
 print("train shape 0 is ",train_data_features.shape[0])
 print("train shape 1 is ",train_data_features.shape[1])
 
-'''
---------------FM------------------------
-'''
-
-'''
-the below code is doing the feature extraction
-'''
-#mymax_features = 300
 mymax_features = train_data_features.shape[1]
 
-'''
-the below code is FNN.....................................................................................................................
-'''
 import math
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import roc_auc_score
 best_auc = 0
-'''
-init the params of FM
-'''
-#length of one hot encoding
 one_hot_encoding_length  = num_features   #1+50+50*10 we have 50 features 1+200+200*10
-
-#length of vector
 k = 16
 print ('initialising')
 init_weight = 0.005
-#uniform distribution
 v = (np.random.rand(one_hot_encoding_length, k) - 0.5) * init_weight
 v_3d = v
-
-#initialize weights of each bit
 w = np.zeros(one_hot_encoding_length)
 w_3d = np.zeros(one_hot_encoding_length)
 w_0 = 0
@@ -257,93 +148,35 @@ weight_decay = 1E-6
 learning_rate = 0.001
 v_weight_decay = 1E-6
 train_rounds = 7
-
-#read the data
-#dataset_total = np.zeros((1728,7)) #1000rows *(51+1)cols
-#dataset_total = np.array(train_data_features,train_data_output)
-#print(train_data_features.shape)
-#print(train_data_output)
-#dataset_total = np.zeros(shape=(train_data_features.shape[0],one_hot_encoding_length),dtype=int)
-#dataset_total = np.asarray(train_data_features)
-
-
-#initialize the X array and y array
-'''
-dataset_array_X = np.zeros((1728,6))
-dataset_array_y = np.zeros((1728,1))
-dataset_test_X =
-dataset_test_y
-'''
-#iterate every line to load all data set
-
-'''
-generate training set and testing set ratio is 7:3
-define sigmoid train function
-'''
-#dataset_train_y = train["sentiment"]
-#dataset_train_X = train_data_features
-
-'''
-RF
-'''
-'''
-the below code is RF
-'''
 print ("Training the random forest...")
 from sklearn.ensemble import RandomForestClassifier
 
-# Initialize a Random Forest classifier with 100 trees
 forest = RandomForestClassifier(n_estimators = 100)
-
-# Fit the forest to the training set, using the bag of words as
-# features and the sentiment labels as the response variable
-#
-# This may take a few minutes to run
-'''
-random forest
-'''
 
 forest = forest.fit(dataset_train_X, dataset_train_y)
 pred_y = forest.predict(dataset_test_X)
 rfauc = roc_auc_score(y_true=dataset_test_y,y_score=pred_y)
 print("random forest auc is",rfauc)
-'''
-naive bayes
-'''
+
 from sklearn.naive_bayes import GaussianNB
 gnb = GaussianNB()
 y_pred_nb = gnb.fit(dataset_train_X, dataset_train_y).predict(dataset_test_X)
 nbauc = roc_auc_score(y_true=dataset_test_y,y_score=y_pred_nb)
 print ("Training the naive bayes...")
 print("Naive bayes auc is",nbauc)
-'''
---------------------------------------------------------------
-'''
+
 def sigmoid(p):
     try:
         return  1.0 / (1.0 + math.exp(-p))
     except OverflowError:
         return 0
-'''
-define predict function in order to calculate the loss function
-x represent non-zero bit for per input
-'''
 
-'''
-the below is code of svm classification
-kernal=rbf
-'''
-
-'''
-the below is knn
-'''
 from sklearn.neighbors import KNeighborsClassifier
 neigh = KNeighborsClassifier()
 y_pred_knn = neigh.fit(X=dataset_train_X,y=dataset_train_y).predict(dataset_test_X)
 knnauc = roc_auc_score(y_true=dataset_test_y,y_score=y_pred_knn)
 print ("-------------Training the knn-------------")
 print("knn auc is",knnauc)
-
 
 from sklearn import svm
 clf = svm.SVC()
@@ -352,24 +185,12 @@ svmauc = roc_auc_score(y_true=dataset_test_y,y_score=y_pred_svm)
 print ("-------------Training the rbfSVM-------------")
 print("rbf SVM auc is",svmauc)
 
-'''
-the below is code of LinearSVC
-kernal is linear
-'''
-
-
 from sklearn import svm
 clf2 = svm.LinearSVC()
 y_pred_svm2 = clf2.fit(X=dataset_train_X,y=dataset_train_y).predict(dataset_test_X)
 svmauc2 = roc_auc_score(y_true=dataset_test_y,y_score=y_pred_svm2)
 print ("-------------Training the linear SVM-------------")
 print("linear SVM auc is",svmauc2)
-
-'''
-the below is code of LinearSVC
-linear is sigmoid
-'''
-
 
 from sklearn import svm
 clf3 = svm.NuSVC(kernel='sigmoid')
@@ -378,9 +199,6 @@ svmauc3 = roc_auc_score(y_true=dataset_test_y,y_score=y_pred_svm3)
 print ("-------------Training the sigmoid SVM-------------")
 print("sigmoid SVM auc is",svmauc3)
 
-'''
-#the below is code of polySVC
-'''
 from sklearn import svm
 clf4 = svm.NuSVC(kernel='poly')
 y_pred_svm4 = clf4.fit(X=dataset_train_X,y=dataset_train_y).predict(dataset_test_X)
@@ -405,7 +223,6 @@ predict = model.predict(X=dataset_test_X)
 tfm_auc_3d = roc_auc_score(y_true=dataset_test_y,y_score=predict)
 print("2d fm is",tfm_auc_3d)
 
-
 from tffm import TFFMClassifier
 model = TFFMClassifier(
     order=3,
@@ -422,7 +239,6 @@ predict = model.predict(X=dataset_test_X)
 
 tfm_auc_3d = roc_auc_score(y_true=dataset_test_y,y_score=predict)
 print("3d fm is",tfm_auc_3d)
-
 
 from tffm import TFFMClassifier
 model = TFFMClassifier(
@@ -458,7 +274,6 @@ predict = model.predict(X=dataset_test_X)
 tfm_auc_3d = roc_auc_score(y_true=dataset_test_y,y_score=predict)
 print("5d fm is",tfm_auc_3d)
 
-
 from tffm import TFFMClassifier
 model = TFFMClassifier(
     order=6,
@@ -493,7 +308,6 @@ predict = model.predict(X=dataset_test_X)
 tfm_auc_3d = roc_auc_score(y_true=dataset_test_y,y_score=predict)
 print("7d fm is",tfm_auc_3d)
 
-
 from tffm import TFFMClassifier
 model = TFFMClassifier(
     order=8,
@@ -510,7 +324,6 @@ predict = model.predict(X=dataset_test_X)
 
 tfm_auc_3d = roc_auc_score(y_true=dataset_test_y,y_score=predict)
 print("8d fm is",tfm_auc_3d)
-
 
 from tffm import TFFMClassifier
 model = TFFMClassifier(
@@ -529,7 +342,6 @@ predict = model.predict(X=dataset_test_X)
 tfm_auc_3d = roc_auc_score(y_true=dataset_test_y,y_score=predict)
 print("9d fm is",tfm_auc_3d)
 
-
 from tffm import TFFMClassifier
 model = TFFMClassifier(
     order=10,
@@ -547,44 +359,16 @@ predict = model.predict(X=dataset_test_X)
 tfm_auc_3d = roc_auc_score(y_true=dataset_test_y,y_score=predict)
 print("10d fm is",tfm_auc_3d)
 
-'''
-the code below is for testing
-'''
-#for testing(using f1 score),using the params we just trained to predict and get the f1 score
-
-#get the predict y
 yp = []
-#yp_3d = []
 
 for row in range(dataset_test_X.shape[0]):
     (p, vsum) = pred(dataset_test_X[row])
-    #(p_3d, vsum3) = pred_3d(dataset_test_X[row])
     yp.append(p)
-    #yp_3d.append(p_3d)
-#calculate the f1 score and rmse and evaluation
-'''
-auc not work!
-
-empirical error
-
-'''
-#auc = roc_auc_score(dataset_test_y, yp)
 rmse = math.sqrt(mean_squared_error(dataset_test_y, yp))
 fmauc = roc_auc_score(dataset_test_y,yp)
-
-
-#rmse_3d = math.sqrt(mean_squared_error(dataset_test_y, yp_3d))
-#fmauc_3d = roc_auc_score(dataset_test_y,yp_3d)
-
-#print("f1 is ",f1)
 print("rmse is ",rmse)
-
-#define function to draw confusion matrix
 print("fmauc is ",fmauc)
 
-'''
-#the code below is training NN
-'''
 import theano
 import theano.tensor as T
 import linecache
@@ -599,19 +383,14 @@ def get_batch_data(index, size,limit):  # 1,5->1,2,3,4,5
     for i in range(index, index + size):
         if(i==limit):
             break;
-
         array_f = dataset_train_X[i]
         y_tmp = dataset_train_y[i]
         x_tmp = []
-
-        #construct the input vector for training FNN
         x_tmp.append(w_0)
-        #for j in dataset_train_X[i]:
         for j in range(dataset_train_X[i].shape[0]):
             x_tmp.append(w[int(j)]*dataset_train_X[i][j])
             for tpm_k in range(k):
                 x_tmp.append(v[int(j)][tpm_k]*dataset_train_X[i][j])
-
         array_F.append(array_f)
         array_X.append(x_tmp)
         array_y.append(int(y_tmp))
@@ -619,11 +398,9 @@ def get_batch_data(index, size,limit):  # 1,5->1,2,3,4,5
     yarray = np.array(array_y, dtype=np.int32)
     return array_F,xarray, yarray
 
-
 def feat_layer_one_index(feat, l):
     return 1 + int(feat)* k + l #
 
-# get x array and y
 def get_xy(line):
 
         y = int(line[0:line.index(',')])
@@ -634,11 +411,7 @@ def get_xy(line):
         return arr, y
 
 def get_err_bat():
-        y = []
         yp = []
-        flag_start = 0
-        xx_bat = []
-        flag = False
         x_input = []
         for row in range(dataset_test_X.shape[0]):
             x_tmp = []
@@ -653,38 +426,28 @@ def get_err_bat():
         for p in pred:
             yp.append(p)
         auc = roc_auc_score(dataset_test_y, yp)
-
         return auc
 
 from theano.tensor.shared_randomstreams import RandomStreams
 srng = RandomStreams(seed=234)
 rng = np.random
 rng.seed(1234)
-batch_size=25                                                          #batch size
-lr=0.002                                                                #learning rate
-lambda1=0.01 # .01                                                        #regularisation rate
+batch_size=25
+lr=0.002
+lambda1=0.01
 hidden1 = 600 															#hidden layer 1
 hidden2 = 300															#hidden layer 2
 acti_type='tanh'                                                    #activation type
 epoch = 50
-
-#initialize the w of NN
 length = 151
-
-#uniform distribute weight matrix of first layer
 w_layer1=rng.uniform(low=-np.sqrt(10. / (length + hidden1)),high=np.sqrt(10. / (length + hidden1)),size=(length,hidden1))
-
-#activation function
 if acti_type=='sigmoid':
     ww1=np.asarray((w_layer1))
 elif acti_type=='tanh':
     ww1=np.asarray((w_layer1*4))
 else:
     ww1=np.asarray(rng.uniform(-1,1,size=(length,hidden1)))
-
-#intercept
 bb1=np.zeros(hidden1)
-
 
 w_layer2=rng.uniform( low=-np.sqrt(10. / (hidden1 + hidden2)),
                 high=np.sqrt(10. / (hidden1 + hidden2)),
@@ -696,11 +459,8 @@ elif acti_type=='tanh':
 else:
     ww2=np.asarray(rng.uniform(-1,1,size=(hidden1,hidden2)))
 bb2=np.zeros(hidden2)
-#from hidden2 to output的w
 ww3=np.zeros(hidden2)
 
-
-# Declare Theano symbolic variables, the interface
 x = T.matrix("x")
 y = T.vector("y")
 w1 = theano.shared(ww1, name="w1")
@@ -711,8 +471,6 @@ b2 = theano.shared(bb2, name="b2")
 b3 = theano.shared(0. , name="b3")
 
 x_drop=dropout=0.5
-
-# Construct Theano expression graph
 r0 = srng.binomial(size=(1, length), n=1, p=x_drop)
 print("r0 is ", r0)
 x = x * r0[0]
@@ -726,8 +484,6 @@ elif acti_type == 'tanh':
     h1 = T.tanh(z1)
 
 r1 = srng.binomial(size=(1, hidden1), n=1, p=dropout)
-
-# intercept
 d1 = h1 * r1[0]
 
 z2 = T.dot(h1, w2) + b2
@@ -737,25 +493,16 @@ elif acti_type == 'linear':
     h2 = z2
 elif acti_type == 'tanh':
     h2 = T.tanh(z2)
-
 d2 = T.tanh(T.dot(h1, w2) + b2)
-
 r2 = srng.binomial(size=(1, hidden2), n=1, p=dropout)
-
-# intercept
 d2 = d2 * r2[0]
-
 p_drop = (1 / (1 + T.exp(-T.dot(d2, w3) - b3)))
+p_1 = 1 / (1 + T.exp(-T.dot(h2, w3) - b3))
+prediction = p_1  # > 0.5
+xent = - y * T.log(p_drop) - (1 - y) * T.log(1 - p_drop)
+cost = xent.sum() + lambda1 * ((w3 ** 2).sum() + (b3 ** 2))
+gw3, gb3, gw2, gb2, gw1, gb1, gx = T.grad(cost, [w3, b3, w2, b2, w1, b1, x])
 
-#final output
-p_1 = 1 / (1 + T.exp(-T.dot(h2, w3) - b3))  # Probability that target = 1
-prediction = p_1  # > 0.5                                   # The prediction thresholded
-xent = - y * T.log(p_drop) - (1 - y) * T.log(1 - p_drop)  # Cross-entropy loss function
-cost = xent.sum() + lambda1 * ((w3 ** 2).sum() + (b3 ** 2))  # The cost to minimize
-gw3, gb3, gw2, gb2, gw1, gb1, gx = T.grad(cost, [w3, b3, w2, b2, w1, b1, x])  # Compute the gradient of the cost
-
-
-# Compile
 print("x is ",x)
 print("y is ", y)
 
@@ -769,8 +516,6 @@ train = theano.function(
 predict = theano.function(inputs=[x], outputs=prediction)
 print("predict is ",predict)
 
-
-# Train
 print("Training model:")
 best_w1 = w1.get_value()
 best_w2 = w2.get_value()
